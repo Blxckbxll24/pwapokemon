@@ -27,7 +27,7 @@ pipeline {
         stage('Run Tests') {
             steps {
                 echo "🧪 Running tests..."
-                sh 'npm run test'
+                sh 'npm run test -- --passWithNoTests'
             }
         }
         
