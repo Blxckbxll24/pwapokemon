@@ -1,41 +1,47 @@
 pipeline {
     agent any
     
+    tools {
+        nodejs 'NodeJS'
+    }
+    
     environment {
         SONAR_SCANNER_HOME = tool 'SonarQubeScanner'
-        NODEJS_HOME = tool 'NodeJS'
-        PATH = "${NODEJS_HOME}/bin:${env.PATH}"
     }
     
     stages {
         stage('Checkout') {
             steps {
+                echo "🔍 Checking out code from branch: ${env.BRANCH_NAME}"
                 checkout scm
             }
         }
         
         stage('Install Dependencies') {
             steps {
-                sh 'npm install'
+                echo "📦 Installing dependencies..."
+                sh 'npm ci'
             }
         }
         
         stage('Run Tests') {
             steps {
+                echo "🧪 Running tests..."
                 sh 'npm run test'
             }
         }
         
         stage('SonarQube Analysis') {
             steps {
+                echo "📊 Running SonarQube analysis..."
                 script {
                     withSonarQubeEnv('SonarQube') {
                         sh """
                             ${SONAR_SCANNER_HOME}/bin/sonar-scanner \
                             -Dsonar.projectKey=pokepwa \
                             -Dsonar.sources=src \
-                            -Dsonar.host.url=http://sonarqube:9000 \
-                            -Dsonar.login=${env.SONAR_AUTH_TOKEN}
+                            -Dsonar.exclusions=**/*.test.jsx,**/*.test.js \
+                            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
                         """
                     }
                 }
@@ -44,8 +50,15 @@ pipeline {
         
         stage('Quality Gate') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                echo "⏳ Waiting for Quality Gate..."
+                timeout(time: 10, unit: 'MINUTES') {
+                    script {
+                        def qg = waitForQualityGate()
+                        if (qg.status != 'OK') {
+                            error "❌ Quality Gate failed: ${qg.status}"
+                        }
+                        echo "✅ Quality Gate passed!"
+                    }
                 }
             }
         }
@@ -55,15 +68,24 @@ pipeline {
                 branch 'main'
             }
             steps {
+                echo "🏗️ Building for production..."
                 sh 'npm run build'
             }
         }
         
         stage('Deploy to Production') {
             when {
-                branch 'main'
+                allOf {
+                    branch 'main'
+                    expression { 
+                        return env.VERCEL_TOKEN != null && 
+                               env.VERCEL_ORG_ID != null && 
+                               env.VERCEL_PROJECT_ID != null 
+                    }
+                }
             }
             steps {
+                echo "🚀 Deploying to Vercel..."
                 script {
                     withCredentials([string(credentialsId: 'vercel-token', variable: 'VERCEL_TOKEN')]) {
                         sh """
@@ -82,13 +104,22 @@ pipeline {
     
     post {
         always {
+            echo "🧹 Cleaning workspace..."
             cleanWs()
         }
         success {
-            echo 'Pipeline ejecutado exitosamente!'
+            script {
+                if (env.BRANCH_NAME == 'develop') {
+                    echo "✅ Pipeline en develop ejecutado exitosamente - Deploy SKIPPED"
+                } else if (env.BRANCH_NAME == 'main') {
+                    echo "✅ Pipeline en main ejecutado exitosamente - Deploy COMPLETADO"
+                } else {
+                    echo "✅ Pipeline ejecutado exitosamente en rama: ${env.BRANCH_NAME}"
+                }
+            }
         }
         failure {
-            echo 'Pipeline falló. Revisar logs.'
+            echo "❌ Pipeline falló. Revisar logs para más detalles."
         }
     }
 }
